@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Find project root, regardless of how the script is called
+PROJECT_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+
+# Load helpers and config
+source "$PROJECT_ROOT/lib/helpers.sh"
+source "$PROJECT_ROOT/config/settings.conf"
+source "$PROJECT_ROOT/config/notifications.conf"
+
+# Ensure log and state directories exist
+mkdir -p "$LOG_DIR" "$STATE_DIR"
+
+CMD="${1:-}"
+
+# Check if a session is already running via the PID file
+is_running() {
+    [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null 2>&1
+}
+
+# Get current session info
+get_session_info() {
+    if ! is_running; then
+        return 1
+    fi
+    
+    local topic duration start elapsed remaining
+    topic=$(cat "$STATE_DIR/topic" 2>/dev/null || echo "Unknown")
+    duration=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
+    start=$(cat "$STATE_DIR/start" 2>/dev/null || echo "0")
+    elapsed=$(($(date +%s) - start))
+    remaining=$((duration - elapsed))
+    
+    if [ "$remaining" -lt 0 ]; then
+        remaining=0
+    fi
+    
+    echo "$topic|$duration|$elapsed|$remaining"
+}
+
+case "$CMD" in
+
+  start)
+    TOPIC="${2:-}"
+    RAW_DURATION="${3:-}"
+
+    if [ -z "$TOPIC" ] || [ -z "$RAW_DURATION" ]; then
+        echo "Usage: study start <topic> <duration>"
+        echo "Examples:"
+        echo "  study start 'Mathematics' 1h30m"
+        echo "  study start 'Physics' 45m"
+        exit 1
+    fi
+    
+    if is_running; then
+        echo "A study session is already running (PID: $(cat "$PID_FILE"))."
+        echo "Current session: $(cat "$STATE_DIR/topic")"
+        echo "Use 'study stop' to end it or 'study status' for details."
+        exit 1
+    fi
+
+    DURATION="$(parse_duration "$RAW_DURATION")"
+    
+    if [ -z "$DURATION" ] || [ "$DURATION" -eq 0 ]; then
+        echo "Error: Invalid duration format '$RAW_DURATION'"
+        echo "Valid formats: 1h30m, 45m, 30m15s, 2h, etc."
+        exit 1
+    fi
+
+    # Start background session manager and capture its PID
+    (
+      # Load config in background process to get correct paths
+      source "$PROJECT_ROOT/lib/helpers.sh"
+      source "$PROJECT_ROOT/config/settings.conf"
+      source "$PROJECT_ROOT/config/notifications.conf"
+      
+      # CRITICAL FIX: Use $BASHPID instead of $$
+      # $$ returns the parent shell's PID, but we need the subshell's actual PID
+      # $BASHPID gives us the PID of the current bash process (this subshell)
+      echo "$BASHPID" > "$PID_FILE"
+      
+      # Save state after PID
+      echo "$TOPIC" > "$STATE_DIR/topic"
+      echo "$DURATION" > "$STATE_DIR/duration"
+      date +%s > "$STATE_DIR/start"
+      
+      # Enable focus mode
+      if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_PAUSE" 2>/dev/null || true
+      fi
+
+      # Wait for session duration
+      sleep "$DURATION"
+
+      # Session complete - calculate stats
+      END=$(date +%s)
+      START=$(cat "$STATE_DIR/start")
+      ACTUAL=$((END - START))
+      FORMATTED_ACTUAL=$(format_duration "$ACTUAL")
+      FORMATTED_PLANNED=$(format_duration "$DURATION")
+
+      # Log session (create header if needed)
+      if [ ! -f "$LOG_DIR/log.csv" ]; then
+        echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
+      fi
+      echo "$(date +%F),$TOPIC,$START,$END,$ACTUAL,true" >> "$LOG_DIR/log.csv"
+
+      # Resume notifications BEFORE sending completion notification
+      if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
+      fi
+
+      # Small delay to ensure dunst is ready
+      sleep 0.3
+
+      # Send single completion notification with full info
+      notify "Study Session Complete ✓" "Topic: $TOPIC
+Duration: $FORMATTED_ACTUAL (planned: $FORMATTED_PLANNED)
+Status: Completed successfully"
+
+      # Cleanup state
+      rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start"
+
+    ) &
+
+    BACKGROUND_PID=$!
+    
+    # Show all info in terminal immediately
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Study Session Started"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Topic:    $TOPIC"
+    echo "  Duration: $RAW_DURATION"
+    echo "  PID:      $BACKGROUND_PID"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Focus mode is now active."
+    echo "Use 'study status' to check progress or 'study stop' to end early."
+    ;;
+
+  stop)
+    if ! is_running; then
+        echo "No study session is currently running."
+        exit 1
+    fi
+    
+    PID=$(cat "$PID_FILE")
+    TOPIC=$(cat "$STATE_DIR/topic" 2>/dev/null || echo "Unknown")
+    PLANNED=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
+    START=$(cat "$STATE_DIR/start" 2>/dev/null || echo "0")
+    ACTUAL=$(($(date +%s) - START))
+    FORMATTED_ACTUAL=$(format_duration "$ACTUAL")
+    FORMATTED_PLANNED=$(format_duration "$PLANNED")
+    
+    # Calculate completion percentage
+    PERCENTAGE=$((ACTUAL * 100 / PLANNED))
+    
+    # Kill the background process
+    kill "$PID" 2>/dev/null || true
+    
+    # Resume notifications immediately
+    if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
+    fi
+    
+    # Log partial session
+    if [ ! -f "$LOG_DIR/log.csv" ]; then
+        echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
+    fi
+    echo "$(date +%F),$TOPIC,$START,$(date +%s),$ACTUAL,false" >> "$LOG_DIR/log.csv"
+    
+    # Cleanup state files
+    rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start"
+
+    # Small delay for dunst to resume
+    sleep 0.3
+    
+    # Send notification with session summary
+    notify_warn "Study Session Stopped" "Topic: $TOPIC
+Duration: $FORMATTED_ACTUAL of $FORMATTED_PLANNED ($PERCENTAGE%)
+Status: Stopped early"
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Study Session Stopped"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Topic:      $TOPIC"
+    echo "  Completed:  $FORMATTED_ACTUAL of $FORMATTED_PLANNED"
+    echo "  Progress:   $PERCENTAGE%"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    ;;
+
+  status)
+    if ! is_running; then
+        echo "No study session is currently running."
+        echo ""
+        echo "Start a session with: study start <topic> <duration>"
+        exit 0
+    fi
+    
+    IFS='|' read -r topic duration elapsed remaining <<< "$(get_session_info)"
+    
+    # Calculate percentage
+    percentage=$((elapsed * 100 / duration))
+    
+    # Create progress bar
+    bar_length=30
+    filled=$((percentage * bar_length / 100))
+    empty=$((bar_length - filled))
+    bar=$(printf "%${filled}s" | tr ' ' '█')
+    bar="${bar}$(printf "%${empty}s" | tr ' ' '░')"
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Active Study Session"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Topic:     $topic"
+    echo "  Progress:  [$bar] $percentage%"
+    echo "  Elapsed:   $(format_duration "$elapsed")"
+    echo "  Remaining: $(format_duration "$remaining")"
+    echo "  Total:     $(format_duration "$duration")"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    ;;
+
+  stats)
+    if [ ! -f "$LOG_DIR/log.csv" ]; then
+        echo "No study sessions recorded yet."
+        exit 0
+    fi
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Study Statistics"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Total sessions
+    total_sessions=$(($(wc -l < "$LOG_DIR/log.csv") - 1))
+    echo "  Total sessions: $total_sessions"
+    
+    if [ "$total_sessions" -gt 0 ]; then
+        # Total time
+        total_seconds=$(awk -F',' 'NR>1 {sum+=$5} END {print sum}' "$LOG_DIR/log.csv")
+        echo "  Total time:     $(format_duration "$total_seconds")"
+        
+        # Completed vs stopped
+        completed=$(awk -F',' 'NR>1 && $6=="true" {count++} END {print count+0}' "$LOG_DIR/log.csv")
+        echo "  Completed:      $completed sessions"
+        
+        # Today's stats
+        today=$(date +%F)
+        today_sessions=$(grep -c "^$today," "$LOG_DIR/log.csv" 2>/dev/null || echo "0")
+        if [ "$today_sessions" -gt 0 ]; then
+            today_seconds=$(grep "^$today," "$LOG_DIR/log.csv" | awk -F',' '{sum+=$5} END {print sum}')
+            today_completed=$(grep "^$today," "$LOG_DIR/log.csv" | awk -F',' '$6=="true" {count++} END {print count+0}')
+            echo "  Today:          $today_sessions sessions, $(format_duration "$today_seconds") ($today_completed completed)"
+        fi
+    fi
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Recent sessions:"
+    tail -n 6 "$LOG_DIR/log.csv" | tail -n 5 | awk -F',' '{
+        duration = $5
+        completed = ($6 == "true") ? "✓" : "✗"
+        h = int(duration / 3600)
+        m = int((duration % 3600) / 60)
+        s = duration % 60
+        if (h > 0) time_str = sprintf("%dh%dm%ds", h, m, s)
+        else if (m > 0) time_str = sprintf("%dm%ds", m, s)
+        else time_str = sprintf("%ds", s)
+        printf "  %s %s - %s (%s)\n", completed, $1, $2, time_str
+    }'
+    ;;
+
+  debug)
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Debug Information"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  PROJECT_ROOT: $PROJECT_ROOT"
+    echo "  LOG_DIR:      $LOG_DIR"
+    echo "  STATE_DIR:    $STATE_DIR"
+    echo "  PID_FILE:     $PID_FILE"
+    echo ""
+    echo "  PID file exists: $([ -f "$PID_FILE" ] && echo "YES" || echo "NO")"
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        echo "  PID value:       $PID"
+        echo "  Process running: $(ps -p "$PID" > /dev/null 2>&1 && echo "YES" || echo "NO")"
+    fi
+    echo ""
+    echo "  State files:"
+    ls -la "$STATE_DIR" 2>/dev/null || echo "  (directory doesn't exist)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    ;;
+
+  *)
+    echo "Study Tracker - Focus Tool"
+    echo ""
+    echo "Usage:"
+    echo "  study start <topic> <duration>  Start a study session"
+    echo "  study stop                      Stop current session"
+    echo "  study status                    Show session progress"
+    echo "  study stats                     View statistics"
+    echo "  study debug                     Show debug information"
+    echo ""
+    echo "Duration formats: 1h30m, 45m, 2h, 30m15s"
+    echo ""
+    echo "Examples:"
+    echo "  study start 'Mathematics' 1h30m"
+    echo "  study start 'Reading' 45m"
+    exit 1
+    ;;
+esac
