@@ -1,18 +1,28 @@
-# yduts
+<div align="center">
+  <img src="assets/yduts-logo.png" alt="yduts logo" width="280"/>
+  
+  <p><i>A minimal, distraction-free CLI study timer for Linux</i></p>
+  
+  [![License: MIT](https://img.shields.io/badge/License-MIT-F39C12.svg)](https://opensource.org/licenses/MIT)
+  [![Bash](https://img.shields.io/badge/Bash-4.0+-2C3E50.svg)](https://www.gnu.org/software/bash/)
+  [![Platform](https://img.shields.io/badge/Platform-Linux-2C3E50.svg)](https://www.linux.org/)
+  
+</div>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Bash](https://img.shields.io/badge/Bash-4.0+-blue.svg)](https://www.gnu.org/software/bash/)
-[![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)](https://www.linux.org/)
-
-A minimal, distraction-free command-line tool for focused study sessions on Linux.
+---
 
 ## What It Does
 
-Study Tracker helps you stay focused by:
-- Setting timed study sessions with a single command
-- Automatically pausing notifications during focus time (dunst/mako/swaync)
-- Tracking your study time and progress
-- Logging completed sessions for statistics
+**yduts** helps you stay focused by managing timed study sessions directly from your terminal:
+
+- Set timed study sessions with a single command
+- Automatically pause notifications during focus time (dunst/mako/swaync)
+- Track your study time and progress with a visual progress bar
+- Log completed sessions for statistics and insights
+
+Perfect for students, developers, and anyone who values focused work time.
+
+---
 
 ## Installation
 
@@ -26,6 +36,8 @@ The installer will:
 - Install to `~/.local/share/study`
 - Create a symlink in `~/.local/bin/study`
 - Guide you through PATH setup if needed
+
+---
 
 ## Usage
 
@@ -50,13 +62,17 @@ study stats
 - `2h` - 2 hours
 - `30m15s` - 30 minutes 15 seconds
 
+---
+
 ## Features
 
 - [x] **Focus Mode** - Auto-pause notifications during study sessions  
-- [x] **Progress Tracking** - Real-time status with progress bar  
+- [x] **Progress Tracking** - Real-time status with visual progress bar  
 - [x] **Session Logging** - CSV logs for all completed sessions  
 - [x] **Statistics** - View total time, completed sessions, and daily progress  
 - [x] **Lightweight** - Pure Bash, minimal dependencies  
+
+---
 
 ## Requirements
 
@@ -64,12 +80,18 @@ study stats
 - `notify-send` (optional, for notifications)
 - `dunst` or `mako` or `swaync` (optional, for focus mode)
 
+---
+
 ## Configuration
 
-Edit `~/.local/share/study/config/settings.conf` to:
+Edit `~/.local/share/study/config/settings.conf` to customize:
+
 - Enable/disable focus mode
 - Change notification daemon commands
-- Customize paths
+- Adjust notification preferences
+- Customize file paths
+
+---
 
 ## Roadmap
 
@@ -88,6 +110,8 @@ Planned features for future releases:
 - [ ] **Interactive History** - Browse past sessions
 - [ ] **Session Scheduling** - Schedule future study sessions
 
+---
+
 ## Uninstall
 
 ```bash
@@ -97,14 +121,35 @@ cd yduts
 
 Your logs will be backed up automatically before removal.
 
-## License
+---
 
-MIT License - See LICENSE file for details
+## Color Palette
 
-## Contributing
+The **yduts** brand uses:
 
-Contributions welcome! Feel free to open issues or submit pull requests.
+- **Primary:** `#2C3E50` (Dark Navy) - Main brand color
+- **Accent:** `#F39C12` (Amber Orange) - Active states and highlights
+- **Text:** `#1A1A1A` (Near Black) - Body text
+- **Background:** `#FFFFFF` (White) - Default background
 
 ---
 
-**Happy studying!** 📚
+## License
+
+MIT License - See [LICENSE](LICENSE) file for details
+
+---
+
+## Contributing
+
+Contributions are welcome! Feel free to:
+- Report bugs or request features via [Issues](https://github.com/saeeedhany/yduts/issues)
+- Submit pull requests
+- Suggest improvements
+
+---
+
+<div align="center">
+  <p><b>Happy studying!</b> ⏱️</p>
+  <p><i>Made with focus by <a href="https://github.com/saeeedhany">saeeedhany</a></i></p>
+</div>
