@@ -22,7 +22,6 @@
 
 Perfect for students, developers, and anyone who values focused work time.
 
-Curious about the idea behind yduts?
 Read the personal theory here: [Why I Built yduts](docs/theory.md)
 
 ---
