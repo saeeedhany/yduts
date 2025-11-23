@@ -22,6 +22,9 @@
 
 Perfect for students, developers, and anyone who values focused work time.
 
+If you're curious about the personal idea and philosophy behind yduts, you can read the short theory here:
+[The Story Behind yduts](docs/Theory.md)
+
 ---
 
 ## Installation
