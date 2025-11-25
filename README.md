@@ -83,8 +83,8 @@ study pomodoro "Coding" 50m 10m    # Custom durations
 - [x] **Session Logging** - CSV logs for all completed sessions  
 - [x] **Statistics** - View total time, completed sessions, and daily progress  
 - [x] **Lightweight** - Pure Bash, minimal dependencies  
-- [x] **Pomodoro Mode** - Automated work/break cycles  🎉 New Feature
-- [x] **Pause/Resume** - Pause sessions and resume later  🎉 New Feature
+- [x] **Pomodoro Mode** - Automated work/break cycles  _🎉 New Feature_
+- [x] **Pause/Resume** - Pause sessions and resume later  _🎉 New Feature_
 
 ---
 
