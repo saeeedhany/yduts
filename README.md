@@ -56,6 +56,16 @@ study stop
 
 # View statistics
 study stats
+
+# Pause/Resume 
+study start "Math" 1h      # Start session
+study pause                # Pause (saves elapsed time)
+study resume               # Continue from where you left off
+
+# Pomodoro Mode
+study pomodoro "Physics" 25m 5m    # 25min work, 5min break
+study pomodoro "Reading"           # Defaults: 25m work, 5m break
+study pomodoro "Coding" 50m 10m    # Custom durations
 ```
 
 ### Duration Formats
@@ -73,6 +83,8 @@ study stats
 - [x] **Session Logging** - CSV logs for all completed sessions  
 - [x] **Statistics** - View total time, completed sessions, and daily progress  
 - [x] **Lightweight** - Pure Bash, minimal dependencies  
+- [x] **Pomodoro Mode** - Automated work/break cycles  🎉 New Feature
+- [x] **Pause/Resume** - Pause sessions and resume later  🎉 New Feature
 
 ---
 
@@ -99,8 +111,6 @@ Edit `~/.local/share/study/config/settings.conf` to customize:
 
 Planned features for future releases:
 
-- [ ] **Pomodoro Mode** - Automated work/break cycles
-- [ ] **Pause/Resume** - Pause sessions and resume later
 - [ ] **Daily Goals** - Set and track daily study goals
 - [ ] **Streaks** - Track consecutive study days
 - [ ] **Topic Analytics** - Per-topic statistics and insights

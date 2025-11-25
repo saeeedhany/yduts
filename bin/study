@@ -20,17 +20,34 @@ is_running() {
     [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null 2>&1
 }
 
+# Check if a session is paused
+is_paused() {
+    [ -f "$STATE_DIR/paused" ]
+}
+
+# Check if in pomodoro mode
+is_pomodoro() {
+    [ -f "$STATE_DIR/pomodoro_mode" ]
+}
+
 # Get current session info
 get_session_info() {
-    if ! is_running; then
+    if ! is_running && ! is_paused; then
         return 1
     fi
     
-    local topic duration start elapsed remaining
+    local topic duration start elapsed remaining paused_time
     topic=$(cat "$STATE_DIR/topic" 2>/dev/null || echo "Unknown")
     duration=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
     start=$(cat "$STATE_DIR/start" 2>/dev/null || echo "0")
-    elapsed=$(($(date +%s) - start))
+    paused_time=$(cat "$STATE_DIR/paused_elapsed" 2>/dev/null || echo "0")
+    
+    if is_paused; then
+        elapsed=$paused_time
+    else
+        elapsed=$(($(date +%s) - start + paused_time))
+    fi
+    
     remaining=$((duration - elapsed))
     
     if [ "$remaining" -lt 0 ]; then
@@ -60,6 +77,11 @@ case "$CMD" in
         echo "Use 'study stop' to end it or 'study status' for details."
         exit 1
     fi
+    
+    if is_paused; then
+        echo "A paused session exists. Use 'study resume' to continue or 'study stop' to cancel it."
+        exit 1
+    fi
 
     DURATION="$(parse_duration "$RAW_DURATION")"
     
@@ -85,6 +107,7 @@ case "$CMD" in
       echo "$TOPIC" > "$STATE_DIR/topic"
       echo "$DURATION" > "$STATE_DIR/duration"
       date +%s > "$STATE_DIR/start"
+      echo "0" > "$STATE_DIR/paused_elapsed"
       
       # Enable focus mode
       if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
@@ -115,13 +138,50 @@ case "$CMD" in
       # Small delay to ensure dunst is ready
       sleep 0.3
 
-      # Send single completion notification with full info
-      notify "Study Session Complete ✓" "Topic: $TOPIC
+      # Check if this was a pomodoro session
+      if [ -f "$STATE_DIR/pomodoro_mode" ]; then
+        POMO_TYPE=$(cat "$STATE_DIR/pomodoro_type" 2>/dev/null || echo "work")
+        
+        if [ "$POMO_TYPE" = "work" ]; then
+          # Work session complete, start break
+          notify "Pomodoro Work Complete! 🎯" "Topic: $TOPIC
+Duration: $FORMATTED_ACTUAL
+Time for a break!"
+          
+          # Start break session
+          BREAK_DURATION=$(cat "$STATE_DIR/pomodoro_break" 2>/dev/null || echo "300")
+          echo "break" > "$STATE_DIR/pomodoro_type"
+          echo "$BREAK_DURATION" > "$STATE_DIR/duration"
+          date +%s > "$STATE_DIR/start"
+          echo "0" > "$STATE_DIR/paused_elapsed"
+          echo "Break" > "$STATE_DIR/topic"
+          
+          # Wait for break
+          sleep "$BREAK_DURATION"
+          
+          # Break complete
+          notify "Break Complete! ⏱️" "Duration: $(format_duration "$BREAK_DURATION")
+Ready to continue?"
+          
+          # Cleanup pomodoro state
+          rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
+        else
+          # Break complete
+          notify "Break Complete! ⏱️" "Duration: $FORMATTED_ACTUAL
+Ready to continue?"
+          
+          # Cleanup pomodoro state
+          rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
+        fi
+      else
+        # Regular session complete
+        notify "Study Session Complete ✓" "Topic: $TOPIC
 Duration: $FORMATTED_ACTUAL (planned: $FORMATTED_PLANNED)
 Status: Completed successfully"
+      fi
 
       # Cleanup state
-      rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start"
+      rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start" "$STATE_DIR/paused_elapsed"
 
     ) &
 
@@ -137,28 +197,271 @@ Status: Completed successfully"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "Focus mode is now active."
-    echo "Use 'study status' to check progress or 'study stop' to end early."
+    echo "Use 'study status' to check progress, 'study pause' to pause, or 'study stop' to end early."
     ;;
 
-  stop)
+  pomodoro)
+    TOPIC="${2:-}"
+    RAW_WORK_DURATION="${3:-25m}"
+    RAW_BREAK_DURATION="${4:-5m}"
+
+    if [ -z "$TOPIC" ]; then
+        echo "Usage: study pomodoro <topic> [work_duration] [break_duration]"
+        echo "Examples:"
+        echo "  study pomodoro 'Mathematics'           # 25min work, 5min break"
+        echo "  study pomodoro 'Physics' 50m 10m       # 50min work, 10min break"
+        echo "  study pomodoro 'Reading' 1h 15m        # 1h work, 15min break"
+        exit 1
+    fi
+    
+    if is_running; then
+        echo "A study session is already running."
+        echo "Use 'study stop' to end it first."
+        exit 1
+    fi
+    
+    if is_paused; then
+        echo "A paused session exists. Use 'study resume' to continue or 'study stop' to cancel it."
+        exit 1
+    fi
+
+    WORK_DURATION="$(parse_duration "$RAW_WORK_DURATION")"
+    BREAK_DURATION="$(parse_duration "$RAW_BREAK_DURATION")"
+    
+    if [ -z "$WORK_DURATION" ] || [ "$WORK_DURATION" -eq 0 ]; then
+        echo "Error: Invalid work duration format '$RAW_WORK_DURATION'"
+        exit 1
+    fi
+    
+    if [ -z "$BREAK_DURATION" ] || [ "$BREAK_DURATION" -eq 0 ]; then
+        echo "Error: Invalid break duration format '$RAW_BREAK_DURATION'"
+        exit 1
+    fi
+
+    # Start pomodoro session
+    (
+      source "$PROJECT_ROOT/lib/helpers.sh"
+      source "$PROJECT_ROOT/config/settings.conf"
+      source "$PROJECT_ROOT/config/notifications.conf"
+      
+      echo "$BASHPID" > "$PID_FILE"
+      echo "$TOPIC" > "$STATE_DIR/topic"
+      echo "$WORK_DURATION" > "$STATE_DIR/duration"
+      date +%s > "$STATE_DIR/start"
+      echo "0" > "$STATE_DIR/paused_elapsed"
+      echo "true" > "$STATE_DIR/pomodoro_mode"
+      echo "work" > "$STATE_DIR/pomodoro_type"
+      echo "$BREAK_DURATION" > "$STATE_DIR/pomodoro_break"
+      
+      if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_PAUSE" 2>/dev/null || true
+      fi
+
+      sleep "$WORK_DURATION"
+
+      END=$(date +%s)
+      START=$(cat "$STATE_DIR/start")
+      ACTUAL=$((END - START))
+
+      if [ ! -f "$LOG_DIR/log.csv" ]; then
+        echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
+      fi
+      echo "$(date +%F),$TOPIC,$START,$END,$ACTUAL,true" >> "$LOG_DIR/log.csv"
+
+      if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
+      fi
+
+      sleep 0.3
+
+      notify "Pomodoro Work Complete! 🎯" "Topic: $TOPIC
+Duration: $(format_duration "$ACTUAL")
+Starting break: $(format_duration "$BREAK_DURATION")"
+
+      # Start break
+      echo "Break" > "$STATE_DIR/topic"
+      echo "$BREAK_DURATION" > "$STATE_DIR/duration"
+      date +%s > "$STATE_DIR/start"
+      echo "break" > "$STATE_DIR/pomodoro_type"
+      
+      sleep "$BREAK_DURATION"
+
+      notify "Break Complete! ⏱️" "Duration: $(format_duration "$BREAK_DURATION")
+Pomodoro cycle finished!"
+
+      rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start" "$STATE_DIR/paused_elapsed"
+      rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
+
+    ) &
+
+    BACKGROUND_PID=$!
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Pomodoro Session Started 🍅"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Topic:    $TOPIC"
+    echo "  Work:     $RAW_WORK_DURATION"
+    echo "  Break:    $RAW_BREAK_DURATION"
+    echo "  PID:      $BACKGROUND_PID"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Focus mode active. A break will start automatically after work time."
+    ;;
+
+  pause)
     if ! is_running; then
-        echo "No study session is currently running."
+        if is_paused; then
+            echo "Session is already paused. Use 'study resume' to continue."
+        else
+            echo "No study session is currently running."
+        fi
         exit 1
     fi
     
     PID=$(cat "$PID_FILE")
     TOPIC=$(cat "$STATE_DIR/topic" 2>/dev/null || echo "Unknown")
+    START=$(cat "$STATE_DIR/start" 2>/dev/null || echo "0")
+    PAUSED_TIME=$(cat "$STATE_DIR/paused_elapsed" 2>/dev/null || echo "0")
+    DURATION=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
+    
+    # Calculate elapsed time
+    CURRENT_ELAPSED=$(($(date +%s) - START + PAUSED_TIME))
+    
+    # Kill the background process
+    kill "$PID" 2>/dev/null || true
+    
+    # Save paused state
+    echo "$CURRENT_ELAPSED" > "$STATE_DIR/paused_elapsed"
+    echo "true" > "$STATE_DIR/paused"
+    date +%s > "$STATE_DIR/pause_time"
+    
+    # Resume notifications
+    if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
+    fi
+    
+    rm -f "$PID_FILE"
+    
+    FORMATTED_ELAPSED=$(format_duration "$CURRENT_ELAPSED")
+    REMAINING=$((DURATION - CURRENT_ELAPSED))
+    FORMATTED_REMAINING=$(format_duration "$REMAINING")
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Study Session Paused ⏸"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Topic:     $TOPIC"
+    echo "  Elapsed:   $FORMATTED_ELAPSED"
+    echo "  Remaining: $FORMATTED_REMAINING"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Use 'study resume' to continue or 'study stop' to end the session."
+    ;;
+
+  resume)
+    if ! is_paused; then
+        if is_running; then
+            echo "Session is already running. Use 'study status' to check progress."
+        else
+            echo "No paused session found."
+        fi
+        exit 1
+    fi
+    
+    TOPIC=$(cat "$STATE_DIR/topic" 2>/dev/null || echo "Unknown")
+    DURATION=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
+    PAUSED_ELAPSED=$(cat "$STATE_DIR/paused_elapsed" 2>/dev/null || echo "0")
+    REMAINING=$((DURATION - PAUSED_ELAPSED))
+    
+    if [ "$REMAINING" -le 0 ]; then
+        echo "Session time has already elapsed. Starting from completed state."
+        REMAINING=1
+    fi
+    
+    # Remove pause marker
+    rm -f "$STATE_DIR/paused" "$STATE_DIR/pause_time"
+    
+    # Start new background process with remaining time
+    (
+      source "$PROJECT_ROOT/lib/helpers.sh"
+      source "$PROJECT_ROOT/config/settings.conf"
+      source "$PROJECT_ROOT/config/notifications.conf"
+      
+      echo "$BASHPID" > "$PID_FILE"
+      date +%s > "$STATE_DIR/start"
+      
+      if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_PAUSE" 2>/dev/null || true
+      fi
+
+      sleep "$REMAINING"
+
+      END=$(date +%s)
+      START=$(cat "$STATE_DIR/start")
+      ACTUAL=$((END - START + PAUSED_ELAPSED))
+      FORMATTED_ACTUAL=$(format_duration "$ACTUAL")
+      FORMATTED_PLANNED=$(format_duration "$DURATION")
+
+      if [ ! -f "$LOG_DIR/log.csv" ]; then
+        echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
+      fi
+      
+      ORIGINAL_START=$((END - ACTUAL))
+      echo "$(date +%F),$TOPIC,$ORIGINAL_START,$END,$ACTUAL,true" >> "$LOG_DIR/log.csv"
+
+      if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
+        eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
+      fi
+
+      sleep 0.3
+
+      notify "Study Session Complete ✓" "Topic: $TOPIC
+Duration: $FORMATTED_ACTUAL (planned: $FORMATTED_PLANNED)
+Status: Completed successfully"
+
+      rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start" "$STATE_DIR/paused_elapsed"
+
+    ) &
+
+    BACKGROUND_PID=$!
+    
+    FORMATTED_REMAINING=$(format_duration "$REMAINING")
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Study Session Resumed ▶"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Topic:     $TOPIC"
+    echo "  Remaining: $FORMATTED_REMAINING"
+    echo "  PID:       $BACKGROUND_PID"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Focus mode is now active."
+    ;;
+
+  stop)
+    if ! is_running && ! is_paused; then
+        echo "No study session is currently running or paused."
+        exit 1
+    fi
+    
+    TOPIC=$(cat "$STATE_DIR/topic" 2>/dev/null || echo "Unknown")
     PLANNED=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
     START=$(cat "$STATE_DIR/start" 2>/dev/null || echo "0")
-    ACTUAL=$(($(date +%s) - START))
+    PAUSED_ELAPSED=$(cat "$STATE_DIR/paused_elapsed" 2>/dev/null || echo "0")
+    
+    if is_running; then
+        PID=$(cat "$PID_FILE")
+        ACTUAL=$(($(date +%s) - START + PAUSED_ELAPSED))
+        kill "$PID" 2>/dev/null || true
+        rm -f "$PID_FILE"
+    else
+        ACTUAL=$PAUSED_ELAPSED
+    fi
+    
     FORMATTED_ACTUAL=$(format_duration "$ACTUAL")
     FORMATTED_PLANNED=$(format_duration "$PLANNED")
     
     # Calculate completion percentage
     PERCENTAGE=$((ACTUAL * 100 / PLANNED))
-    
-    # Kill the background process
-    kill "$PID" 2>/dev/null || true
     
     # Resume notifications immediately
     if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
@@ -169,10 +472,20 @@ Status: Completed successfully"
     if [ ! -f "$LOG_DIR/log.csv" ]; then
         echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
     fi
-    echo "$(date +%F),$TOPIC,$START,$(date +%s),$ACTUAL,false" >> "$LOG_DIR/log.csv"
+    
+    if is_paused; then
+        PAUSE_TIME=$(cat "$STATE_DIR/pause_time" 2>/dev/null || echo "0")
+        ORIGINAL_START=$((PAUSE_TIME - PAUSED_ELAPSED))
+        echo "$(date +%F),$TOPIC,$ORIGINAL_START,$PAUSE_TIME,$ACTUAL,false" >> "$LOG_DIR/log.csv"
+    else
+        ORIGINAL_START=$(($(date +%s) - ACTUAL))
+        echo "$(date +%F),$TOPIC,$ORIGINAL_START,$(date +%s),$ACTUAL,false" >> "$LOG_DIR/log.csv"
+    fi
     
     # Cleanup state files
-    rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start"
+    rm -f "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start" "$STATE_DIR/paused_elapsed"
+    rm -f "$STATE_DIR/paused" "$STATE_DIR/pause_time"
+    rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
 
     # Small delay for dunst to resume
     sleep 0.3
@@ -192,8 +505,8 @@ Status: Stopped early"
     ;;
 
   status)
-    if ! is_running; then
-        echo "No study session is currently running."
+    if ! is_running && ! is_paused; then
+        echo "No study session is currently running or paused."
         echo ""
         echo "Start a session with: study start <topic> <duration>"
         exit 0
@@ -204,15 +517,33 @@ Status: Stopped early"
     # Calculate percentage
     percentage=$((elapsed * 100 / duration))
     
-    # Create progress bar
+    # Create progress bar - FIXED VERSION
     bar_length=30
     filled=$((percentage * bar_length / 100))
     empty=$((bar_length - filled))
-    bar=$(printf "%${filled}s" | tr ' ' '█')
-    bar="${bar}$(printf "%${empty}s" | tr ' ' '░')"
+    
+    bar=""
+    if [ "$filled" -gt 0 ]; then
+        bar=$(printf "%${filled}s" | tr ' ' '=')
+    fi
+    if [ "$empty" -gt 0 ]; then
+        bar="${bar}$(printf "%${empty}s")"
+    fi
+    
+    STATUS_TEXT="Active Study Session"
+    if is_paused; then
+        STATUS_TEXT="Paused Study Session ⏸"
+    elif is_pomodoro; then
+        POMO_TYPE=$(cat "$STATE_DIR/pomodoro_type" 2>/dev/null || echo "work")
+        if [ "$POMO_TYPE" = "work" ]; then
+            STATUS_TEXT="Pomodoro Work Session 🍅"
+        else
+            STATUS_TEXT="Pomodoro Break Session ☕"
+        fi
+    fi
     
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  Active Study Session"
+    echo "  $STATUS_TEXT"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Topic:     $topic"
     echo "  Progress:  [$bar] $percentage%"
@@ -220,6 +551,11 @@ Status: Stopped early"
     echo "  Remaining: $(format_duration "$remaining")"
     echo "  Total:     $(format_duration "$duration")"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if is_paused; then
+        echo ""
+        echo "Use 'study resume' to continue or 'study stop' to end."
+    fi
     ;;
 
   stats)
@@ -286,6 +622,8 @@ Status: Stopped early"
         echo "  PID value:       $PID"
         echo "  Process running: $(ps -p "$PID" > /dev/null 2>&1 && echo "YES" || echo "NO")"
     fi
+    echo "  Session paused:  $(is_paused && echo "YES" || echo "NO")"
+    echo "  Pomodoro mode:   $(is_pomodoro && echo "YES" || echo "NO")"
     echo ""
     echo "  State files:"
     ls -la "$STATE_DIR" 2>/dev/null || echo "  (directory doesn't exist)"
@@ -296,17 +634,22 @@ Status: Stopped early"
     echo "Study Tracker - Focus Tool"
     echo ""
     echo "Usage:"
-    echo "  study start <topic> <duration>  Start a study session"
-    echo "  study stop                      Stop current session"
-    echo "  study status                    Show session progress"
-    echo "  study stats                     View statistics"
-    echo "  study debug                     Show debug information"
+    echo "  study start <topic> <duration>           Start a study session"
+    echo "  study pomodoro <topic> [work] [break]    Start pomodoro session"
+    echo "  study pause                              Pause current session"
+    echo "  study resume                             Resume paused session"
+    echo "  study stop                               Stop current session"
+    echo "  study status                             Show session progress"
+    echo "  study stats                              View statistics"
+    echo "  study debug                              Show debug information"
     echo ""
     echo "Duration formats: 1h30m, 45m, 2h, 30m15s"
     echo ""
     echo "Examples:"
     echo "  study start 'Mathematics' 1h30m"
-    echo "  study start 'Reading' 45m"
+    echo "  study pomodoro 'Reading' 25m 5m"
+    echo "  study pause"
+    echo "  study resume"
     exit 1
     ;;
 esac
