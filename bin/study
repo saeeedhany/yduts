@@ -93,62 +93,48 @@ case "$CMD" in
 
     # Start background session manager and capture its PID
     (
-      # Load config in background process to get correct paths
       source "$PROJECT_ROOT/lib/helpers.sh"
       source "$PROJECT_ROOT/config/settings.conf"
       source "$PROJECT_ROOT/config/notifications.conf"
       
-      # CRITICAL FIX: Use $BASHPID instead of $$
-      # $$ returns the parent shell's PID, but we need the subshell's actual PID
-      # $BASHPID gives us the PID of the current bash process (this subshell)
       echo "$BASHPID" > "$PID_FILE"
       
-      # Save state after PID
       echo "$TOPIC" > "$STATE_DIR/topic"
       echo "$DURATION" > "$STATE_DIR/duration"
       date +%s > "$STATE_DIR/start"
       echo "0" > "$STATE_DIR/paused_elapsed"
       
-      # Enable focus mode
       if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
         eval "$FOCUS_CMD_PAUSE" 2>/dev/null || true
       fi
 
-      # Wait for session duration
       sleep "$DURATION"
 
-      # Session complete - calculate stats
       END=$(date +%s)
       START=$(cat "$STATE_DIR/start")
       ACTUAL=$((END - START))
       FORMATTED_ACTUAL=$(format_duration "$ACTUAL")
       FORMATTED_PLANNED=$(format_duration "$DURATION")
 
-      # Log session (create header if needed)
       if [ ! -f "$LOG_DIR/log.csv" ]; then
         echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
       fi
       echo "$(date +%F),$TOPIC,$START,$END,$ACTUAL,true" >> "$LOG_DIR/log.csv"
 
-      # Resume notifications BEFORE sending completion notification
       if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
         eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
       fi
 
-      # Small delay to ensure dunst is ready
       sleep 0.3
 
-      # Check if this was a pomodoro session
       if [ -f "$STATE_DIR/pomodoro_mode" ]; then
         POMO_TYPE=$(cat "$STATE_DIR/pomodoro_type" 2>/dev/null || echo "work")
         
         if [ "$POMO_TYPE" = "work" ]; then
-          # Work session complete, start break
           notify "Pomodoro Work Complete! 🎯" "Topic: $TOPIC
 Duration: $FORMATTED_ACTUAL
 Time for a break!"
           
-          # Start break session
           BREAK_DURATION=$(cat "$STATE_DIR/pomodoro_break" 2>/dev/null || echo "300")
           echo "break" > "$STATE_DIR/pomodoro_type"
           echo "$BREAK_DURATION" > "$STATE_DIR/duration"
@@ -156,38 +142,30 @@ Time for a break!"
           echo "0" > "$STATE_DIR/paused_elapsed"
           echo "Break" > "$STATE_DIR/topic"
           
-          # Wait for break
           sleep "$BREAK_DURATION"
           
-          # Break complete
           notify "Break Complete! ⏱️" "Duration: $(format_duration "$BREAK_DURATION")
 Ready to continue?"
           
-          # Cleanup pomodoro state
           rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
         else
-          # Break complete
           notify "Break Complete! ⏱️" "Duration: $FORMATTED_ACTUAL
 Ready to continue?"
           
-          # Cleanup pomodoro state
           rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
         fi
       else
-        # Regular session complete
         notify "Study Session Complete ✓" "Topic: $TOPIC
 Duration: $FORMATTED_ACTUAL (planned: $FORMATTED_PLANNED)
 Status: Completed successfully"
       fi
 
-      # Cleanup state
       rm -f "$PID_FILE" "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start" "$STATE_DIR/paused_elapsed"
 
     ) &
 
     BACKGROUND_PID=$!
     
-    # Show all info in terminal immediately
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Study Session Started"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -210,7 +188,6 @@ Status: Completed successfully"
         echo "Examples:"
         echo "  study pomodoro 'Mathematics'           # 25min work, 5min break"
         echo "  study pomodoro 'Physics' 50m 10m       # 50min work, 10min break"
-        echo "  study pomodoro 'Reading' 1h 15m        # 1h work, 15min break"
         exit 1
     fi
     
@@ -238,7 +215,6 @@ Status: Completed successfully"
         exit 1
     fi
 
-    # Start pomodoro session
     (
       source "$PROJECT_ROOT/lib/helpers.sh"
       source "$PROJECT_ROOT/config/settings.conf"
@@ -278,7 +254,6 @@ Status: Completed successfully"
 Duration: $(format_duration "$ACTUAL")
 Starting break: $(format_duration "$BREAK_DURATION")"
 
-      # Start break
       echo "Break" > "$STATE_DIR/topic"
       echo "$BREAK_DURATION" > "$STATE_DIR/duration"
       date +%s > "$STATE_DIR/start"
@@ -324,18 +299,14 @@ Pomodoro cycle finished!"
     PAUSED_TIME=$(cat "$STATE_DIR/paused_elapsed" 2>/dev/null || echo "0")
     DURATION=$(cat "$STATE_DIR/duration" 2>/dev/null || echo "0")
     
-    # Calculate elapsed time
     CURRENT_ELAPSED=$(($(date +%s) - START + PAUSED_TIME))
     
-    # Kill the background process
     kill "$PID" 2>/dev/null || true
     
-    # Save paused state
     echo "$CURRENT_ELAPSED" > "$STATE_DIR/paused_elapsed"
     echo "true" > "$STATE_DIR/paused"
     date +%s > "$STATE_DIR/pause_time"
     
-    # Resume notifications
     if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
         eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
     fi
@@ -373,14 +344,12 @@ Pomodoro cycle finished!"
     REMAINING=$((DURATION - PAUSED_ELAPSED))
     
     if [ "$REMAINING" -le 0 ]; then
-        echo "Session time has already elapsed. Starting from completed state."
+        echo "Session time has already elapsed."
         REMAINING=1
     fi
     
-    # Remove pause marker
     rm -f "$STATE_DIR/paused" "$STATE_DIR/pause_time"
     
-    # Start new background process with remaining time
     (
       source "$PROJECT_ROOT/lib/helpers.sh"
       source "$PROJECT_ROOT/config/settings.conf"
@@ -460,15 +429,12 @@ Status: Completed successfully"
     FORMATTED_ACTUAL=$(format_duration "$ACTUAL")
     FORMATTED_PLANNED=$(format_duration "$PLANNED")
     
-    # Calculate completion percentage
     PERCENTAGE=$((ACTUAL * 100 / PLANNED))
     
-    # Resume notifications immediately
     if [ "${ENABLE_FOCUS_MODE:-false}" = true ]; then
         eval "$FOCUS_CMD_RESUME" 2>/dev/null || true
     fi
     
-    # Log partial session
     if [ ! -f "$LOG_DIR/log.csv" ]; then
         echo "date,topic,start,end,duration_seconds,completed" > "$LOG_DIR/log.csv"
     fi
@@ -482,15 +448,12 @@ Status: Completed successfully"
         echo "$(date +%F),$TOPIC,$ORIGINAL_START,$(date +%s),$ACTUAL,false" >> "$LOG_DIR/log.csv"
     fi
     
-    # Cleanup state files
     rm -f "$STATE_DIR/topic" "$STATE_DIR/duration" "$STATE_DIR/start" "$STATE_DIR/paused_elapsed"
     rm -f "$STATE_DIR/paused" "$STATE_DIR/pause_time"
     rm -f "$STATE_DIR/pomodoro_mode" "$STATE_DIR/pomodoro_type" "$STATE_DIR/pomodoro_break"
 
-    # Small delay for dunst to resume
     sleep 0.3
     
-    # Send notification with session summary
     notify_warn "Study Session Stopped" "Topic: $TOPIC
 Duration: $FORMATTED_ACTUAL of $FORMATTED_PLANNED ($PERCENTAGE%)
 Status: Stopped early"
@@ -514,10 +477,8 @@ Status: Stopped early"
     
     IFS='|' read -r topic duration elapsed remaining <<< "$(get_session_info)"
     
-    # Calculate percentage
     percentage=$((elapsed * 100 / duration))
     
-    # Create progress bar - FIXED VERSION
     bar_length=30
     filled=$((percentage * bar_length / 100))
     empty=$((bar_length - filled))
@@ -568,20 +529,16 @@ Status: Stopped early"
     echo "  Study Statistics"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    # Total sessions
     total_sessions=$(($(wc -l < "$LOG_DIR/log.csv") - 1))
     echo "  Total sessions: $total_sessions"
     
     if [ "$total_sessions" -gt 0 ]; then
-        # Total time
         total_seconds=$(awk -F',' 'NR>1 {sum+=$5} END {print sum}' "$LOG_DIR/log.csv")
         echo "  Total time:     $(format_duration "$total_seconds")"
         
-        # Completed vs stopped
         completed=$(awk -F',' 'NR>1 && $6=="true" {count++} END {print count+0}' "$LOG_DIR/log.csv")
         echo "  Completed:      $completed sessions"
         
-        # Today's stats
         today=$(date +%F)
         today_sessions=$(grep -c "^$today," "$LOG_DIR/log.csv" 2>/dev/null || echo "0")
         if [ "$today_sessions" -gt 0 ]; then
@@ -605,6 +562,304 @@ Status: Stopped early"
         else time_str = sprintf("%ds", s)
         printf "  %s %s - %s (%s)\n", completed, $1, $2, time_str
     }'
+    ;;
+
+  dmenu-watch)
+    # Live updating dmenu display
+    if ! command -v dmenu >/dev/null 2>&1; then
+        echo "Error: dmenu is not installed"
+        exit 1
+    fi
+    
+    if ! is_running && ! is_paused; then
+        notify "No Active Session" "Start a session first with: study start <topic> <duration>"
+        exit 0
+    fi
+    
+    # Continuous update loop
+    while is_running || is_paused; do
+        IFS='|' read -r topic duration elapsed remaining <<< "$(get_session_info)"
+        percentage=$((elapsed * 100 / duration))
+        
+        # Create progress bar
+        bar_length=30
+        filled=$((percentage * bar_length / 100))
+        empty=$((bar_length - filled))
+        progress_bar=$(printf "%${filled}s" | tr ' ' '█')
+        progress_bar="${progress_bar}$(printf "%${empty}s" | tr ' ' '░')"
+        
+        # Build status display
+        if is_paused; then
+            STATUS="⏸ PAUSED"
+        elif is_pomodoro; then
+            POMO_TYPE=$(cat "$STATE_DIR/pomodoro_type" 2>/dev/null || echo "work")
+            if [ "$POMO_TYPE" = "work" ]; then
+                STATUS="🍅 POMODORO WORK"
+            else
+                STATUS="☕ POMODORO BREAK"
+            fi
+        else
+            STATUS="▶ ACTIVE"
+        fi
+        
+        # Create the display
+        DISPLAY_TEXT="╔══════════════════════════════════════════╗
+║  $STATUS
+║  Topic: $topic
+╠══════════════════════════════════════════╣
+║  Progress: [$progress_bar] $percentage%
+║  
+║  Elapsed:   $(format_duration "$elapsed")
+║  Remaining: $(format_duration "$remaining")
+║  Total:     $(format_duration "$duration")
+╠══════════════════════════════════════════╣
+║  [p] Pause  [r] Resume  [s] Stop  [q] Quit
+╚══════════════════════════════════════════╝"
+        
+        # Show in dmenu with single character input
+        echo "$DISPLAY_TEXT" | dmenu -l 15 -p "Study Session (Live)" > /tmp/study_action 2>/dev/null &
+        DMENU_PID=$!
+        
+        # Wait 1 second or for dmenu to close
+        sleep 1
+        
+        # Check if user pressed a key by checking if dmenu is still running
+        if ! ps -p $DMENU_PID > /dev/null 2>&1; then
+            # dmenu closed, might have action
+            if [ -f /tmp/study_action ]; then
+                ACTION=$(cat /tmp/study_action)
+                rm -f /tmp/study_action
+                
+                case "$ACTION" in
+                    *"[p]"*|*"Pause"*)
+                        if ! is_paused; then
+                            study pause
+                        fi
+                        ;;
+                    *"[r]"*|*"Resume"*)
+                        if is_paused; then
+                            study resume
+                        fi
+                        ;;
+                    *"[s]"*|*"Stop"*)
+                        study stop
+                        exit 0
+                        ;;
+                    *"[q]"*|*"Quit"*)
+                        exit 0
+                        ;;
+                esac
+            fi
+        else
+            # Kill the dmenu to refresh
+            kill $DMENU_PID 2>/dev/null
+            wait $DMENU_PID 2>/dev/null
+        fi
+    done
+    
+    notify "Session Complete" "Study session has ended"
+    ;;
+
+  watch)
+    # Terminal-based live watch (alternative to dmenu-watch)
+    if ! is_running && ! is_paused; then
+        echo "No active session to watch."
+        echo "Start a session with: study start <topic> <duration>"
+        exit 0
+    fi
+    
+    echo "Watching session... Press Ctrl+C to exit (session will continue)"
+    echo ""
+    
+    while is_running || is_paused; do
+        clear
+        
+        IFS='|' read -r topic duration elapsed remaining <<< "$(get_session_info)"
+        percentage=$((elapsed * 100 / duration))
+        
+        # Create progress bar
+        bar_length=40
+        filled=$((percentage * bar_length / 100))
+        empty=$((bar_length - filled))
+        bar=""
+        if [ "$filled" -gt 0 ]; then
+            bar=$(printf "%${filled}s" | tr ' ' '=')
+        fi
+        if [ "$empty" -gt 0 ]; then
+            bar="${bar}$(printf "%${empty}s")"
+        fi
+        
+        # Status
+        if is_paused; then
+            STATUS_TEXT="Paused Study Session ⏸"
+        elif is_pomodoro; then
+            POMO_TYPE=$(cat "$STATE_DIR/pomodoro_type" 2>/dev/null || echo "work")
+            if [ "$POMO_TYPE" = "work" ]; then
+                STATUS_TEXT="Pomodoro Work Session 🍅"
+            else
+                STATUS_TEXT="Pomodoro Break Session ☕"
+            fi
+        else
+            STATUS_TEXT="Active Study Session ▶"
+        fi
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  $STATUS_TEXT (Live)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Topic:     $topic"
+        echo "  Progress:  [$bar] $percentage%"
+        echo "  Elapsed:   $(format_duration "$elapsed")"
+        echo "  Remaining: $(format_duration "$remaining")"
+        echo "  Total:     $(format_duration "$duration")"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  Ctrl+C to exit watch (session continues)"
+        echo "  Use 'study pause/resume/stop' from another terminal"
+        
+        sleep 1
+    done
+    
+    echo ""
+    echo "Session has ended."
+    ;;
+
+  dmenu)
+    if ! command -v dmenu >/dev/null 2>&1; then
+        echo "Error: dmenu is not installed"
+        echo "Install with: sudo apt install dmenu (or your distro's package manager)"
+        exit 1
+    fi
+    
+    if is_running || is_paused; then
+        IFS='|' read -r topic duration elapsed remaining <<< "$(get_session_info)"
+        percentage=$((elapsed * 100 / duration))
+        
+        # Create visual progress bar for dmenu
+        bar_length=20
+        filled=$((percentage * bar_length / 100))
+        empty=$((bar_length - filled))
+        progress_bar=$(printf "%${filled}s" | tr ' ' '█')
+        progress_bar="${progress_bar}$(printf "%${empty}s" | tr ' ' '░')"
+        
+        MENU_TITLE="$topic [$progress_bar] ${percentage}% • $(format_duration "$remaining")"
+        
+        if is_paused; then
+            # Create progress display as first item
+            STATUS_DISPLAY="⏸ PAUSED: $topic [$progress_bar] ${percentage}% • $(format_duration "$elapsed") elapsed"
+            ACTION=$(echo -e "$STATUS_DISPLAY\n━━━━━━━━━━━━━━━━━━━━━\n▶ Resume\n⏹ Stop\n📊 Full Status\n📈 Statistics" | \
+                dmenu -i -l 6 -p "Session:")
+        else
+            STATUS_DISPLAY="▶ ACTIVE: $topic [$progress_bar] ${percentage}% • $(format_duration "$remaining") left"
+            ACTION=$(echo -e "$STATUS_DISPLAY\n━━━━━━━━━━━━━━━━━━━━━\n⏸ Pause\n⏹ Stop\n📊 Full Status\n➕ Add 5min\n➖ Sub 5min\n📈 Statistics" | \
+                dmenu -i -l 8 -p "Session:")
+        fi
+        
+        case "$ACTION" in
+            *"PAUSED:"*|*"ACTIVE:"*)
+                # User selected the status line, show full status
+                study status > /tmp/study_status.txt
+                cat /tmp/study_status.txt | dmenu -l 20 -p "Session Status"
+                ;;
+            "▶ Resume")
+                study resume && notify "Session Resumed" "Continuing: $topic"
+                ;;
+            "⏸ Pause")
+                study pause && notify "Session Paused" "Topic: $topic"
+                ;;
+            "⏹ Stop")
+                study stop
+                ;;
+            "📊 Full Status")
+                study status > /tmp/study_status.txt
+                cat /tmp/study_status.txt | dmenu -l 20 -p "Session Status"
+                ;;
+            "➕ Add 5min")
+                NEW_DURATION=$((duration + 300))
+                echo "$NEW_DURATION" > "$STATE_DIR/duration"
+                notify "Time Added" "+5 minutes to session"
+                ;;
+            "➖ Sub 5min")
+                NEW_DURATION=$((duration - 300))
+                if [ "$NEW_DURATION" -gt 0 ]; then
+                    echo "$NEW_DURATION" > "$STATE_DIR/duration"
+                    notify "Time Removed" "-5 minutes from session"
+                fi
+                ;;
+            "📈 Statistics")
+                study stats > /tmp/study_stats.txt
+                cat /tmp/study_stats.txt | dmenu -l 20 -p "Study Statistics"
+                ;;
+        esac
+    else
+        ACTION=$(echo -e "▶ Start Session\n🍅 Start Pomodoro\n📊 Statistics\n⚙ Quick Start" | \
+            dmenu -i -p "Study Tracker")
+        
+        case "$ACTION" in
+            "▶ Start Session")
+                TOPIC=$(echo "" | dmenu -p "Enter topic:")
+                [ -z "$TOPIC" ] && exit 0
+                
+                DURATION=$(echo -e "25m\n45m\n1h\n1h30m\n2h\nCustom..." | dmenu -p "Duration:")
+                [ -z "$DURATION" ] && exit 0
+                
+                if [ "$DURATION" = "Custom..." ]; then
+                    DURATION=$(echo "" | dmenu -p "Enter duration (e.g., 1h30m):")
+                    [ -z "$DURATION" ] && exit 0
+                fi
+                
+                study start "$TOPIC" "$DURATION"
+                ;;
+                
+            "🍅 Start Pomodoro")
+                TOPIC=$(echo "" | dmenu -p "Enter topic:")
+                [ -z "$TOPIC" ] && exit 0
+                
+                WORK=$(echo -e "25m\n50m\n1h\nCustom..." | dmenu -p "Work duration:")
+                [ -z "$WORK" ] && exit 0
+                
+                if [ "$WORK" = "Custom..." ]; then
+                    WORK=$(echo "" | dmenu -p "Work duration:")
+                    [ -z "$WORK" ] && exit 0
+                fi
+                
+                BREAK=$(echo -e "5m\n10m\n15m\nCustom..." | dmenu -p "Break duration:")
+                [ -z "$BREAK" ] && exit 0
+                
+                if [ "$BREAK" = "Custom..." ]; then
+                    BREAK=$(echo "" | dmenu -p "Break duration:")
+                    [ -z "$BREAK" ] && exit 0
+                fi
+                
+                study pomodoro "$TOPIC" "$WORK" "$BREAK"
+                ;;
+                
+            "📊 Statistics")
+                study stats > /tmp/study_stats.txt
+                cat /tmp/study_stats.txt | dmenu -l 20 -p "Study Statistics"
+                ;;
+                
+            "⚙ Quick Start")
+                PRESET=$(echo -e "Math (1h)\nReading (45m)\nCoding (2h)\nQuick Study (25m)" | \
+                    dmenu -p "Quick Start:")
+                
+                case "$PRESET" in
+                    "Math (1h)")
+                        study start "Mathematics" 1h
+                        ;;
+                    "Reading (45m)")
+                        study start "Reading" 45m
+                        ;;
+                    "Coding (2h)")
+                        study start "Coding" 2h
+                        ;;
+                    "Quick Study (25m)")
+                        TOPIC=$(echo "" | dmenu -p "Topic:")
+                        [ -n "$TOPIC" ] && study start "$TOPIC" 25m
+                        ;;
+                esac
+                ;;
+        esac
+    fi
     ;;
 
   debug)
@@ -641,6 +896,7 @@ Status: Stopped early"
     echo "  study stop                               Stop current session"
     echo "  study status                             Show session progress"
     echo "  study stats                              View statistics"
+    echo "  study dmenu                              Open dmenu interface"
     echo "  study debug                              Show debug information"
     echo ""
     echo "Duration formats: 1h30m, 45m, 2h, 30m15s"
@@ -648,8 +904,7 @@ Status: Stopped early"
     echo "Examples:"
     echo "  study start 'Mathematics' 1h30m"
     echo "  study pomodoro 'Reading' 25m 5m"
-    echo "  study pause"
-    echo "  study resume"
+    echo "  study dmenu"
     exit 1
     ;;
 esac

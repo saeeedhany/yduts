@@ -80,11 +80,14 @@ study pomodoro "Coding" 50m 10m    # Custom durations
 
 - [x] **Focus Mode** - Auto-pause notifications during study sessions  
 - [x] **Progress Tracking** - Real-time status with visual progress bar  
+- [x] **Pause/Resume** - Pause sessions and continue later without losing progress
+- [x] **Pomodoro Mode** - Automated work/break cycles with configurable durations
+- [x] **dmenu Integration** - Quick access via dmenu for seamless WM integration
+- [x] **dwmblocks/Status Bar** - Live progress bar in your status bar (updates every second)
+- [x] **Live Watch Mode** - Terminal-based live session monitoring
 - [x] **Session Logging** - CSV logs for all completed sessions  
 - [x] **Statistics** - View total time, completed sessions, and daily progress  
 - [x] **Lightweight** - Pure Bash, minimal dependencies  
-- [x] **Pomodoro Mode** - Automated work/break cycles  _🎉 New Feature_
-- [x] **Pause/Resume** - Pause sessions and resume later  _🎉 New Feature_
 
 ---
 
@@ -92,6 +95,7 @@ study pomodoro "Coding" 50m 10m    # Custom durations
 
 - Bash 4.0+
 - `notify-send` (optional, for notifications)
+- `dmenu` (optional, for dmenu integration)
 - `dunst` or `mako` or `swaync` (optional, for focus mode)
 
 ---
